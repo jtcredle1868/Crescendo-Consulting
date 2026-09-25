@@ -1,0 +1,242 @@
+// Crescendo Consulting - Phase 1 MVP data model
+// Connects musicians, producers, technicians, venues, and other music-industry
+// service providers; supports identity/business verification and safe,
+// in-person meetups at neutral, public venues after an online connection.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  MUSICIAN
+  PRODUCER
+  TECHNICIAN
+  VENUE
+  SERVICE_PROVIDER
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VerificationProviderType {
+  MANUAL
+  IDME
+}
+
+enum VerificationDocumentType {
+  GOVERNMENT_ID
+  BUSINESS_LICENSE
+  TAX_DOCUMENT
+  PORTFOLIO_PROOF
+  OTHER
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  BLOCKED
+}
+
+enum MeetingSpaceCategory {
+  COWORKING
+  CAFE
+  REHEARSAL_STUDIO
+  RECORDING_STUDIO
+  COMMUNITY_CENTER
+  VENUE_LOBBY
+  OTHER
+}
+
+enum MeetingStatus {
+  PROPOSED
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingStatus {
+  REQUESTED
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  COMPLETED
+}
+
+model User {
+  id                  String              @id @default(uuid())
+  email               String              @unique
+  passwordHash        String
+  role                UserRole
+  isBusiness          Boolean             @default(false)
+  businessName        String?
+  verificationStatus  VerificationStatus  @default(UNVERIFIED)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  profile               Profile?
+  verificationRequests  VerificationRequest[]
+  sentConnections       Connection[]           @relation("ConnectionRequester")
+  receivedConnections    Connection[]           @relation("ConnectionRecipient")
+  messages              Message[]
+  proposedMeetings      MeetingProposal[]      @relation("MeetingProposer")
+  bookingsAsProvider    Booking[]              @relation("BookingProvider")
+  bookingsAsClient      Booking[]              @relation("BookingClient")
+  reviewedVerifications VerificationRequest[]  @relation("VerificationReviewer")
+
+  @@index([role])
+  @@index([verificationStatus])
+}
+
+model Profile {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName      String
+  headline         String?
+  bio              String?
+  city             String?
+  state            String?
+  country          String?
+  genres           String[] @default([])
+  skills           String[] @default([])
+  portfolioLinks   String[] @default([])
+  avatarUrl        String?
+  yearsExperience  Int?
+  rateMin          Int?
+  rateMax          Int?
+  rateUnit         String?  @default("hour")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([city])
+  @@index([genres])
+  @@index([skills])
+}
+
+model VerificationRequest {
+  id           String                    @id @default(uuid())
+  userId       String
+  user         User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     VerificationProviderType  @default(MANUAL)
+  status       VerificationStatus        @default(PENDING)
+  notes        String?
+  submittedAt  DateTime                  @default(now())
+  reviewedAt   DateTime?
+  reviewerId   String?
+  reviewer     User?                     @relation("VerificationReviewer", fields: [reviewerId], references: [id])
+
+  documents VerificationDocument[]
+
+  @@index([status])
+  @@index([userId])
+}
+
+model VerificationDocument {
+  id                     String                   @id @default(uuid())
+  verificationRequestId  String
+  verificationRequest    VerificationRequest      @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+  type                   VerificationDocumentType
+  fileUrl                String
+  uploadedAt             DateTime                 @default(now())
+}
+
+model Connection {
+  id           String            @id @default(uuid())
+  requesterId  String
+  requester    User              @relation("ConnectionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipientId  String
+  recipient    User              @relation("ConnectionRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  status       ConnectionStatus  @default(PENDING)
+  message      String?
+  createdAt    DateTime          @default(now())
+  respondedAt  DateTime?
+
+  messages          Message[]
+  meetingProposals  MeetingProposal[]
+
+  @@unique([requesterId, recipientId])
+  @@index([recipientId, status])
+  @@index([requesterId, status])
+}
+
+model Message {
+  id            String     @id @default(uuid())
+  connectionId  String
+  connection    Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        User       @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body          String
+  createdAt     DateTime   @default(now())
+  readAt        DateTime?
+
+  @@index([connectionId, createdAt])
+}
+
+model MeetingSpace {
+  id         String                @id @default(uuid())
+  name       String
+  address    String
+  city       String
+  state      String?
+  country    String                @default("US")
+  category   MeetingSpaceCategory
+  capacity   Int?
+  notes      String?
+  isPartner  Boolean               @default(false)
+  createdAt  DateTime              @default(now())
+
+  meetingProposals  MeetingProposal[]
+  bookings          Booking[]
+
+  @@index([city])
+}
+
+model MeetingProposal {
+  id              String        @id @default(uuid())
+  connectionId    String
+  connection      Connection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  meetingSpaceId  String
+  meetingSpace    MeetingSpace  @relation(fields: [meetingSpaceId], references: [id])
+  proposedById    String
+  proposedBy      User          @relation("MeetingProposer", fields: [proposedById], references: [id])
+  proposedTime    DateTime
+  status          MeetingStatus @default(PROPOSED)
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  @@index([connectionId])
+}
+
+model Booking {
+  id              String        @id @default(uuid())
+  providerId      String
+  provider        User          @relation("BookingProvider", fields: [providerId], references: [id], onDelete: Cascade)
+  clientId        String
+  client          User          @relation("BookingClient", fields: [clientId], references: [id], onDelete: Cascade)
+  meetingSpaceId  String?
+  meetingSpace    MeetingSpace? @relation(fields: [meetingSpaceId], references: [id])
+  title           String
+  description     String?
+  startTime       DateTime
+  endTime         DateTime
+  rate            Int?
+  status          BookingStatus @default(REQUESTED)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([providerId, status])
+  @@index([clientId, status])
+}
